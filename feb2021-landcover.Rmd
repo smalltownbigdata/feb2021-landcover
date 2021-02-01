@@ -1,0 +1,297 @@
+---
+title: "Working with National Land Cover Database (NLCD) in R: Raster package and treemaps with ggplot2"
+author: "Small Town Big Data"
+date: "January 24, 2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+setwd("C:/Users/ncinglis/Desktop/stbd/nlcd/")
+```
+
+This tutorial accompanies the Small Town Big Data blog post [Towns, they are a'changin'. Read it here](https://www.smalltownbigdata.com/post/steamboat-springs-land-cover-data-nlcd).
+
+***
+
+### Welcome to R. It's the GIS you never knew you needed. Let's get set up and do some math with maps. 
+
+
+This tutorial offers an introduction to working with National Land Cover Database rasters in R. We'll cover:
+
+  * Loading and plotting a series of rasters
+  * Animating a series of rasters in a GIF file
+  * Basic dataframe manipulation using a for loop to summarize raster data
+  * Treemaps in Ggplot2
+
+Software: If you're a beginner, I recommend downloading [RStudio](https://rstudio.com/products/rstudio/download/). 
+Open up a new .R file and start cutting and pasting!
+
+
+Data: You can peruse and download NLCD data [here](https://www.mrlc.gov/viewer/)
+
+The projection is a little funky, and cropping and clipping to a county boundary can take a lot of processing time. To give you a little head start, I've projected, clipped and trimmed seven timesteps of Routt County NLCD for you, and included it in this repository. But feel free to download your own area of interest and let me know what you find!
+
+
+**Let's jump right in.** 
+
+### Loading raster data
+
+```{r load, message=F, warning=F, fig.align='center'}
+# Set your working directory to the /data folder included in the repository using setwd(). 
+# Install the following packages for this tutorial: 
+# install.packages(c("FedData", "rasterVis", "raster","sp", "rgdal", "reshape2", "treemapify", "ggplot2", "kableExtra", "animation" "scales"))
+library(FedData)
+library(rasterVis)
+library(raster)
+library(sp)
+library(rgdal)
+library(reshape2)
+library(treemapify)
+library(ggplot2)
+library(kableExtra)
+library(animation)
+library(scales)
+
+# Load a single raster using the raster() function This is the  
+r<-raster("nlcd_1.tif")
+
+# What does a raster object look like in R? What are the key attributes of this data format? 
+r
+
+# We have seven different years of NLCD data. The stack() function takes as many rasters as you give it and stacks them into one object.
+# If they have the same resolution, extent and spatial reference, this is an easy way to conduct operations on multiple layers at the same time.
+
+# We can load in the NLCD series straight into a stack.I do this so often that I wrote a little function that takes a regular expression and creates a raster stack from the files that match it.
+
+list2stack <- function(x) {
+  z<-list.files(pattern = x)
+  y<-raster::stack(z)
+  return(y)
+}
+
+# If you want to get into regular expressions, there are entire books on it. Just trust me this one works: 
+p<-"^nlcd_.*\\.tif$"
+s<-list2stack(p)
+
+#Let's plot this stack and take a look at it. 
+plot(s)
+```
+
+*** 
+
+### Making maps: Plotting an NLCD raster with the correct colors
+
+National Land Cover Database has a standardized legend with specific colors that correspond to land cover classes. We want to visualize Routt County land cover in a manner consistent with other NLCD maps. This isn't exactly trivial in R, but with a few steps, we can plot a land cover map with code that we can use forever and ever!
+
+
+```{r colors, fig.align='center'}
+
+# Load in the NLCD legend, colors and descriptions from package FedData. 
+
+legend<-pal_nlcd()
+legend
+
+# Love that. I wish I had found FedData 4 years ago. 
+# Now, we make a vector of all the values we have in our study area and select those from the legend object. 
+
+vals<-unique(s[[6]])
+df<-legend[legend$code %in% vals,]
+
+
+# Alright, now let's make this plot pretty, working with 2016 data. We're going to use leveplot() from package rasterVis. First, we need to recognize it as a categorical raster using ratify(): 
+rat<-ratify(s[[6]])
+
+# I used some code from the creator of rasterVis to make a custom legend:
+myKey <- list(rectangles=list(col = df$color),
+              text=list(lab=df$description),
+              space='left',
+              columns=1,
+              size=2,
+              cex=.6)
+
+# And here we plot it minus the axes, ticks and labels. 
+levelplot(rat, att='ID', 
+                     col.regions=df$color,
+                     par.settings = list(axis.line = list(col = "transparent"), 
+                                        strip.background = list(col = 'transparent'), 
+                                        strip.border = list(col = 'transparent')), 
+                     scales = list(col = "transparent"),
+                     colorkey=F,
+                     key=myKey)
+
+# Gorgeous. Let's animate it. 
+```
+
+*** 
+
+### Animation
+
+We can animate a series of rasters to show land cover change over time. All we need to do is take that levelplot() function and loop through each layer of our raster stack. We use the package `animation` to save as a GIF. 
+
+```{r animation, eval=FALSE}
+# Make a list of years in string format for titles
+years.list<-list("2001", "2004", "2006", "2008", "2011", "2013", "2016")
+
+
+saveGIF(
+  {
+    for(i in c(1:nlayers(s))){
+      rat<-ratify(s[[i]])
+      a<-levelplot(rat, att='ID', 
+                col.regions=df$color,
+                par.settings = list(axis.line = list(col = "transparent"), 
+                                    strip.background = list(col = 'transparent'), 
+                                    strip.border = list(col = 'transparent')), 
+                scales = list(col = "transparent"),
+                main=paste0("Routt County land cover ", years.list[[i]]),
+                colorkey=F,
+)
+      print(a)
+    }
+  }, interval=0.8, movie.name="szoom.gif", ani.width = 600)
+
+
+# Check your working directory for the gif file. It should look like this: 
+
+```
+
+![](C:\Users\ncinglis\Desktop\stbd\nlcd\s.gif)
+
+*** 
+
+**Let's run some numbers.**
+
+
+### Math with maps: Quantifying land change with raster data
+
+Raster is faster. The beauty of working with rasters is that a raster object functions just like a regular dataframe. It essentially has three attributes for each data point: An x position, a y position and the value itself. But stored as a single gridded image, it's much more friendly to work with than a vector file. It may look like a pixelated generalization of realiy. It kind of is. But this image is soaked with information - and, we can do math on it. 
+
+So let's explore some basics of Routt County land cover change with the information embedded in our NLCD raster stack. 
+
+And in the process, we're going to learn a handy technique that you saw in the animation section: the **for loop.** 
+
+```{r freq.perc, fig.align='center'}
+
+# We have this data frame of NLCD classes:
+
+df
+
+# And, using the freq() function, we can count the number of cells in each class.
+
+freq(s[[1]])
+
+# So our goal: create a data frame (a table) where each row is a land cover class, and there is one column for each time step with the pixel count for each class. I find the greatest challenge of building a for loop is conceptualizing its structure.
+
+# So I usually start by experimenting and finding a method that works on one layer:  
+
+test<-merge(df, freq(s[[1]]), by.x="code" ,by.y="value", all.y=F, all.x=T)
+names(test)[ncol(test)]<-2001
+test
+
+# OK, looks good. Now, we want to do this for each year. We could copy and paste and do the above for all seven layers. 
+# But what if we had 100 layers? What happens when we want to repeat this task on another dataset with different names?
+# We need to automate, and we do that by looping through each layer to perform the task we wrote above. 
+
+# we'll make a vector of all the years in our study period, then loop through the positions (1-7), merging the frequency information into the data frame and naming the column after that year. 
+
+
+years<-c(2001, 2004, 2006, 2008, 2011, 2013, 2016)
+
+d<-df
+for (i in 1:length(years)) {
+  d<-merge(d, freq(s[[i]]), by.x="code" ,by.y="value", all.y=F, all.x=T)
+  names(d)[ncol(d)]<-paste0("pix_", years[[i]])
+  }
+
+# Now, a few percent change calculations:
+
+d$square.mile.change<-(d$pix_2016 - d$pix_2001) * 30 * 30 * 0.00000038610
+d$percentchange<-(d$pix_2016 - d$pix_2001)/d$pix_2001
+d$prop2016<-d$pix_2016/sum(d$pix_2016)
+
+d$percentchange.2001.2016<-paste(round(100*d$percentchange, 2), "%", sep="")
+d$percent.area.2016<-paste(round(100*d$prop2016, 2), "%", sep="")
+
+# Make it a pretty table with kable:
+
+
+kable(d[,c(3,12,15,16)])  %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = F)
+
+# And just for fun, aggregate it by class for another perspective
+
+dfc<-aggregate(prop2016 ~ class, d[,c(2,13,14)], sum)
+dfc$prop2016<-paste(round(100*dfc$prop2016, 2), "%", sep="")
+
+kable(dfc)  %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = F)
+```
+
+***
+
+
+### Death to the pie chart: Treemaps for proportional and hierarchical data visualization
+
+For years, researchers in perception and data visualization have warned about the dangers of pie charts. The bottom line is this: Humans aren't great at comparing the sizes of angular shapes, such as the slice of a pie. So if two pie slices are close together in size, it's hard for us to tell which one is bigger. 
+
+Enter the treemap. Because you know what *is* easier for our eyes to compare? Rectangles. It's that simple. Pie charts, but with rectangles. Treemaps are especially useful for visualizing hierarchical data. Here, we'll look at Routt County land cover proportions with treemaps. The package `treemapify` enables plotting them through Ggplot. Next time someone asks you to make a pie chart, I hope you consider making one of these instead! Let's make treemaps happen in mainstream data viz. 
+
+```{r plots, fig.align='center'}
+# To start, we need to shift the data frame from "wide" format to "long" format, because GGplot likes it that way.
+head(d)
+dn<- melt(d, id.vars = 1:4)
+
+# Check out what that did - see how all of the land cover types are in one column now?
+dn$value<-as.numeric(dn$value)
+head(dn)
+
+# For this first treemap, we want to summarize the land cover area by class, not individual description. So we need to aggregate by adding all of the values for each class together. 
+
+dc<-aggregate(value ~ class, dn[dn$variable=="pix_2016",], sum)
+head(dc)
+
+# Here are the colors from the palette dataframe in the order we'll need them for this plot. I also made a vector of labels so that I could format them exactly the way I want. 
+
+class_pal<-c("#B2ADA3", "#ED0000", "#68AA63", "#B5C98E", "#DBD83D", "#CCBA7C", "#476BA0", "#BAD8EA" )
+class_labels<-c("barren", "developed", "forest", "grassland", "agriculture", "shrubland", "water", "wetlands")
+```
+
+```{r plotclass,fig.align='center', fig.height=7, fig.width=11}
+# Treemaps are pretty straightforward in Ggplot. The relevant aesthetics are area, fill and label.
+# Area is the size of the box - assign that to the area value in your dataframe. 
+# Fill is the color of the box. In this example we want the color to correspond to land cover class. 
+# Assign the label vector from above to the label aesthetic. 
+
+
+c<-ggplot(dc, aes(area=value, fill=class, label=class_labels)) +
+  geom_treemap() +
+ geom_treemap_text(grow=T, color="grey20", place="bottomleft")+
+  scale_fill_manual(values=class_pal)+
+  theme(legend.position = "none")
+c
+```
+
+
+
+
+```{r plotssubgroup, fig.align='center', fig.height=7, fig.width=11}
+# Treemaps are ideal for hierarchical data. In this instance, we want to keep the colors for the aggregated classes, but break each box down by land cover description. We do this by adding the "subgroup" argument. 
+
+t<-ggplot(dn[dn$variable=="pix_2016",], aes(area=value, fill=class, subgroup=class, label=tolower(description))) +
+  geom_treemap() +
+  geom_treemap_text(grow=T, color="grey20", place="bottomleft", reflow=T) +
+  scale_fill_manual(values=class_pal)+
+  theme(legend.position = 'none')+
+  geom_treemap_subgroup_border(color="grey80", size=2)
+
+t
+```
+
+
+***
+
+
+We went over a LOT in this tutorial. Basic raster functions, levelplots, for loops, animations and treemaps. If you have any questions at all, feel free to [email me!](https://www.smalltownbigdata.com/contact) 
+
+**Next post drops March 2.**
