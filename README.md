@@ -1,5 +1,5 @@
 # Small Town Big Data: February 2021
-## Towns, they are a'Changin': What 16 years of land cover data reveals about the changing landscape around Steamboat Springs
+## What 16 years of land cover data reveals about the changing landscape around Steamboat Springs
 
 This repository contains the tutorial that accompanies [this blog post](https://www.smalltownbigdata.com/post/steamboat-springs-land-cover-data-nlcd). 
 
